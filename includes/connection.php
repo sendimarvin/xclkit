@@ -4,6 +4,7 @@ ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
 
+//$servername = "185.224.137.6";
 $servername = "185.224.137.6";
 $username = "u832900566_sckit";
 $password = "u832900566";
