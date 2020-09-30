@@ -1,7 +1,5 @@
 <?php
-
-
-//http://cresteddevelopers.com/AppFiles/SkulKitApp/manage-users.php?
+//SELECT DATE_ADD(CURDATE(), INTERVAL (SELECT subscription_days FROM settings LIMIT 1) DAY)
 header('Access-Control-Allow-Origin: *');
 header('Content-Type: application/json');
 date_default_timezone_set('Africa/Kampala');
@@ -9,8 +7,136 @@ date_default_timezone_set('Africa/Kampala');
 require_once 'includes/connection.php';
 require_once 'includes/user.class.php';
 
+if (isset($_REQUEST['account_expirey_status'])) {
 
-if (isset($_REQUEST['get_transactions'])) {
+    $user_id = $_REQUEST['userId'];
+    $phone = '';
+    $checkStatus = true;
+    $userTransactions = $user->getTransactions(compact('user_id', 'phone', 'checkStatus'));
+    $userTransactionsCount = count($userTransactions);
+    if($userTransactionsCount) {
+        $lastSuccessfullTransaction = end($userTransactions);
+        $lastSuccessfullTransaction['success'] = true;
+        die(json_encode($lastSuccessfullTransaction));
+    } else {
+        die(json_encode(['success' => false, 'msg' => "No transaction found"]));
+    }
+    
+} elseif (isset($_REQUEST['update_payment_status'])) {
+
+    $data = $_REQUEST['data'];
+    $user->saveWebhookResponse($data, $isFromApp = 1);
+
+    $response = json_decode($data);
+    die(json_encode($user->updateTransactionStatus($response, true)));
+} elseif (isset($_REQUEST['webhook_notification'])) {
+    $body = @file_get_contents("php://input");
+
+    //save the webhook in the database from here
+    $user->saveWebhookResponse($body);
+
+    // retrieve the signature sent in the reques header's.
+    $signature = (isset($_SERVER['HTTP_VERIF_HASH']) ? $_SERVER['HTTP_VERIF_HASH'] : '');
+
+    if (!$signature) {
+        // only a post with Flutterwave signature header gets our attention
+        exit();
+    }
+    $response = json_decode($body);
+    die(json_encode($user->updateTransactionStatus($response, false)));
+
+} elseif (isset($_REQUEST['validate_payment_details'])) {
+    
+    
+    $userId = $_REQUEST['userId'];
+    $currency = $_REQUEST['currency'];
+    $amount = $_REQUEST['amount'];
+    $email = $_REQUEST['email'];
+    $phone_number = $_REQUEST['phone_number'];
+    $fullname = $_REQUEST['fullname'];
+    
+    $validatioResponse = $user->validateDetails(compact('userId','currency', 'amount','email','phone_number','fullname'));
+    
+    die(json_encode($validatioResponse));
+
+
+} elseif (isset($_REQUEST['change_group_user_status'])) {
+
+    $groupUserID = (int) $_REQUEST['groupUserID'];
+    $userStatus = (int) $_REQUEST['userStatus'];
+    die(json_encode($user->updateUserStatus($groupUserID, $userStatus)));
+
+} elseif (isset($_REQUEST['approve_group_request'])) {
+
+    $user_id = (int) $_REQUEST['user_id'];
+    $group_id = (int) $_REQUEST['group_id'];
+    $status = (int) $_REQUEST['status'];
+    die(json_encode($user->updateUserRequest($user_id, $group_id, $status)));
+
+} elseif (isset($_REQUEST['get_user_notifications'])) {
+
+    $user_id = $_REQUEST['user_id'];
+    // die(json_encode($user->getUserNotifications($user_id)));
+
+} elseif (isset($_REQUEST['update_last_seen'])) {
+
+    $user_id = $_REQUEST['user_id'];
+    die(json_encode($user->updateLastSeen($user_id)));
+
+} elseif (isset($_REQUEST['reset_user_password'])) {
+
+    $user_id = $_REQUEST['user_id'];
+    $new_password = $_REQUEST['new_password'];
+    die(json_encode($user->updateUserPassword($user_id, $new_password)));
+
+} elseif (isset($_REQUEST['reset_user_account'])) {
+
+    $email = $_REQUEST['email'];
+    die(json_encode($user->resetAccount($email)));
+
+} elseif (isset($_REQUEST['save_discussion_file'])) {
+
+    die(json_encode($user->saveDiscussionFile()));
+
+} elseif (isset($_REQUEST['delete_notes'])) {
+
+    $notes_id = $_REQUEST['id'];
+    die(json_encode($user->deleteNotes($notes_id)));
+
+} elseif (isset($_REQUEST['delete_level'])) {
+
+    $level_id = $_REQUEST['level_id'];
+    die(json_encode($user->deletelevel($level_id)));
+
+} elseif (isset($_REQUEST['add_level'])) {
+
+    $level_id = $_REQUEST['level_id'];
+    $level_name = $_REQUEST['level_name'];
+    die(json_encode($user->addlevel($level_id, $level_name)));
+
+} elseif (isset($_REQUEST['delete_question'])) {
+
+    $id = @$_REQUEST['id'];
+    die(json_encode($user->deleteQuestionsInSubject($id)));
+
+} elseif (isset($_REQUEST['get_subject_questions'])) {
+
+    $subject_id = @$_REQUEST['subject_id'];
+
+    die(json_encode($user->getQuestionsInSubject($subject_id)));
+    
+
+} elseif (isset($_REQUEST['add_questions'])) {
+
+    $question_id = @$_REQUEST['question_id'];
+    $question_title = @$_REQUEST['question_title'];
+    $question_subject = @$_REQUEST['question_subject'];
+
+    $data = compact('question_id', 'question_title', 'question_subject');
+    die(json_encode($user->addQuestionsInSubject($data)));
+    
+
+} elseif (isset($_REQUEST['get_transactions'])) {
 
     $user_id = @$_REQUEST['user_id'];
     $phone = @$_REQUEST['phone'];
@@ -24,6 +150,13 @@ if (isset($_REQUEST['get_transactions'])) {
     $charge = $_REQUEST['charge'];
 
     die(json_encode($user->saveCharge(compact('user_id', 'charge'))));
+
+} elseif (isset($_REQUEST['update_subscription_days'])) {
+
+    $user_id = $_REQUEST['user_id'];
+    $subscription_days = $_REQUEST['subscription_days'];
+
+    die(json_encode($user->saveSubscriptionDays(compact('user_id', 'subscription_days'))));
 
 
 } elseif (isset($_REQUEST['save_payment_details'])) {
@@ -50,6 +183,7 @@ if (isset($_REQUEST['get_transactions'])) {
     die(json_encode($user->getSettings()));
 
 } elseif (isset($_REQUEST['add_subject'])) {
+
     $subject_id = @$_REQUEST['subject_id'];
     $subject_name = @$_REQUEST['subject_name'];
     $subject_level = (int) $_REQUEST['subject_level'];
@@ -124,7 +258,7 @@ if (isset($_REQUEST['get_transactions'])) {
     $phone = $_REQUEST['phone'];
     $email = $_REQUEST['email'];
     $password = @$_REQUEST['password'];
-    $level = $_REQUEST['level'];
+    $level = @$_REQUEST['level'];
     $token = @$_REQUEST['token'];
     $picture = '';
 
@@ -144,8 +278,9 @@ if (isset($_REQUEST['get_transactions'])) {
 
 } elseif (isset($_REQUEST['get_groups'])) {
 
-    $subject_id = (int) @$_REQUEST['subject_id'];
-    die(json_encode($user->getGroups(compact('subject_id'))));
+    $subject_ids = @$_REQUEST['subject_id'];
+    $user_id = (int) @$_REQUEST['user_id'];
+    die(json_encode($user->getGroups(compact('subject_ids', 'user_id'))));
 
 } elseif (isset($_REQUEST['get_subjects'])) {
 
@@ -180,6 +315,10 @@ if (isset($_REQUEST['get_transactions'])) {
     $groups = $_REQUEST['groups'];
 
     die(json_encode($user->addUserToGroups(compact('user_id', 'groups'))));
+
+}  elseif (isset($_REQUEST['get_all_group_members'])) {
+
+    die(json_encode($user->getAllGroupMembers()));
 
 }  elseif (isset($_REQUEST['get_user_groups'])) {
 
@@ -219,23 +358,35 @@ if (isset($_REQUEST['get_transactions'])) {
     $question_id = $_REQUEST['question_id'];
     die(json_encode($user->getQuestionsAnswers($question_id)));
 
+} elseif (isset($_REQUEST['delete_group_question'])) {
+
+    $question_id = (int) @$_REQUEST['question_id'];
+    die(json_encode($user->deleteGroupQuestion($question_id)));
+
 } elseif (isset($_REQUEST['create_question_in_group'])) {
     
+    $question_id = (int) @$_REQUEST['question_id'];
     $question = $_REQUEST['question'];
-    $group_id = $_REQUEST['group_id'];
-    $created_by = $_REQUEST['user_id'];
+    $group_id = (int) @$_REQUEST['group_id'];
+    $created_by = (int) @$_REQUEST['user_id'];
 
-    $event_data = compact('question', 'group_id', 'created_by');
+    $event_data = compact('question_id', 'question', 'group_id', 'created_by');
     
     die(json_encode($user->createGroupQuestion($event_data)));
 
+} elseif (isset($_REQUEST['delete_answer'])) {
+
+    $answer_id = (int) @$_REQUEST['answer_id'];
+    die(json_encode($user->deleteAnswerOnQuestion($answer_id)));
+
 } elseif (isset($_REQUEST['create_answer_on_question'])) {
     
+    $answer_id = (int) @$_REQUEST['answer_id'];
     $answer = $_REQUEST['answer'];
-    $question_id = $_REQUEST['question_id'];
-    $created_by = $_REQUEST['user_id'];
+    $question_id = (int) @$_REQUEST['question_id'];
+    $created_by = (int) @$_REQUEST['user_id'];
 
-    $data = compact('answer', 'question_id', 'created_by');
+    $data = compact('answer_id', 'answer', 'question_id', 'created_by');
     die(json_encode($user->createAnswerOnQuestion($data)));
 
 } elseif (isset($_REQUEST['get_notes_in_group'])) {
@@ -250,10 +401,11 @@ if (isset($_REQUEST['get_transactions'])) {
 
 } elseif (isset($_REQUEST['add_notes_to_subject'])) {
     
+    $notes_id = $_REQUEST['notes_id'];
     $title = $_REQUEST['title'];
     $subject_id = @$_REQUEST['subject_id'];
 
-    $data = compact('title', 'subject_id');
+    $data = compact('notes_id', 'title', 'subject_id');
     die(json_encode($user->addNotesInSubject($data)));
 
 } elseif (isset($_REQUEST['add_notes_to_a_group'])) {
@@ -348,7 +500,9 @@ if (isset($_REQUEST['get_transactions'])) {
     $users_data = compact('not_in_group_id', 'level_id', 'group_id');
     die(json_encode($user->getUsers($users_data)));
 
-} 
+} else {
+    die(json_encode(['success' => false, 'msg' => "No action detecteed."]));
+}
 
 
 
