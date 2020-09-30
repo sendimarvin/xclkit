@@ -19,6 +19,11 @@ class User {
     {
         $this->conn = $conn;
     }
+    
+    function saveWebhookResponse ($body, $isFromApp = 0) {
+        return $this->conn->exec("INSERT INTO paymentLogs SET paymentLog = '{$body}', 
+            isFromApp = '{$isFromApp}'");
+    }
 
     function getTransactions ($data)
     {
@@ -27,17 +32,32 @@ class User {
         if ($user_id) {
             $where .= " AND `user_id` = '{$user_id}' ";
         }
-        if ($phone) {
+        if ($phone <> '') {
             $where .= " AND `phone` LIKE '{$phone}' ";
         }
+
+        
+        if (isset($checkStatus) && $checkStatus) {
+            $where .= " AND `payment_status` LIKE 'success' ";
+        }
+
+        // echo  "SELECT payment_transactions.*, 
+        // (SELECT first_name FROM users WHERE users.id = payment_transactions.user_id) AS username,
+        // IF ((payment_transactions.paymentDays > 0 AND payment_transactions.currentCharge > 0), 
+        //     (payment_transactions.paymentDays / payment_transactions.currentCharge) * payment_transactions.debit_amount, 0) AS days_subscribed_for,
+        //     DATE_ADD(DATE(payment_transactions.created_at), INTERVAL (SELECT days_subscribed_for) DAY) AS expired_on
+        // FROM payment_transactions WHERE 1=1 {$where}";
+
         return $this->conn->query("SELECT payment_transactions.*, 
-            (SELECT first_name FROM users WHERE users.id = payment_transactions.user_id) AS username
-            FROM payment_transactions WHERE 1=1 {$where}")
-            ->fetchAll(PDO::FETCH_ASSOC);
+            (SELECT first_name FROM users WHERE users.id = payment_transactions.user_id) AS username,
+            IF ((payment_transactions.paymentDays > 0 AND payment_transactions.currentCharge > 0), 
+                (payment_transactions.paymentDays / payment_transactions.currentCharge) * payment_transactions.debit_amount, 0) AS days_subscribed_for,
+                DATE_ADD(DATE(payment_transactions.created_at), INTERVAL (SELECT days_subscribed_for) DAY) AS expired_on
+            FROM payment_transactions WHERE 1=1 {$where}")->fetchAll(PDO::FETCH_ASSOC);
     }
 
     function updateTransactionOnIPNResponse ($data) {
-
+        extract(($data));
         try {
             $this->conn->exec("UPDATE payment_transactions 
                 SET transaction_id = '{$transaction_id}', return_message = '{$reason}'
@@ -54,6 +74,37 @@ class User {
         }
 
     }
+    
+    function validateDetails ($tranDetails)
+    {
+        extract($tranDetails);
+
+        $order_id = $this->InitiatePayment(['phone_no'=>$phone_number, 
+            'amount'=>$amount, 'user_id'=>$userId]);
+        
+        $data = array(
+            "order_id" => $order_id, 
+            "amount" => $amount, 
+            "type" => "mobile_money_uganda",
+            "currency" => $currency,
+            "email" => $order_id,
+            "phone_number" => $phone_number,
+            "fullname" => $fullname,
+            "client_ip" => "154.123.220.1",
+            "device_fingerprint" => "62wd23423rq324323qew1",
+            "meta" => [
+                "flightID" => "213213AS",
+                "userId" => $userId
+                ]       
+            );
+        
+        $settingsInfo = (array) $this->getSettings();
+        $data['secretKey'] = $settingsInfo['secretKey'];
+        $data['encryptionKey'] = $settingsInfo['encryptionKey'];
+        $data['publickKey'] = $settingsInfo['publickKey'];
+        
+        return $data;
+    }
  
     function InitiatePayment ($details)
     {
@@ -68,63 +119,91 @@ class User {
         $this->conn->exec("INSERT INTO payment_transactions 
             SET reference_no = NULL, phone = '{$phone_no}', `user_id` = '{$user_id}', debit_amount = '{$amount}',
             credit_amount = 0, balance = 0, reason = '{$settingsinfo->payment_message}', action = '{$action}',
-            currency = '{$settingsinfo->payment_currency}', created_at = NOW(), payment_status = 'pending'");
+            currency = '{$settingsinfo->payment_currency}', created_at = NOW(), payment_status = 'pending',
+            currentCharge = (SELECT charge FROM settings), paymentDays = (SELECT subscription_days FROM settings)
+            ");
 
-        $reference_no = $this->conn->lastinsertId();
+        return $this->conn->lastinsertId();
 
-        $payload = array(
-            'username' => $settingsinfo->payment_username, 
-            'password' => $settingsinfo->payment_password, 
-            'action' => $action, 
-            'amount' => $amount, 
-            'phone'=> $phone_no, 
-            'currency'=> $settingsinfo->payment_currency, 
-            'reference'=> $reference_no, 
-            'reason'=> $settingsinfo->payment_message
-        );
+        // $payload = array(
+        //     'username' => $settingsinfo->payment_username, 
+        //     'password' => $settingsinfo->payment_password, 
+        //     'action' => $action, 
+        //     'amount' => $amount, 
+        //     'phone'=> $phone_no, 
+        //     'currency'=> $settingsinfo->payment_currency, 
+        //     'reference'=> $reference_no, 
+        //     'reason'=> $settingsinfo->payment_message
+        // );
 
-        // return $payload;
-         
         //open connection 
-        $ch = curl_init(); 
+        // $ch = curl_init(); 
          
-        //set the url, number of POST vars, POST data 
-        curl_setopt($ch,CURLOPT_URL, SELF::url); 
-        curl_setopt($ch,CURLOPT_POSTFIELDS, json_encode($payload)); 
-        curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0); 
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0); 
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT ,15); 
-        curl_setopt($ch, CURLOPT_TIMEOUT, 400); //timeout in seconds 
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1); 
-        //execute post 
-        $result = curl_exec($ch);
+        // //set the url, number of POST vars, POST data 
+        // curl_setopt($ch,CURLOPT_URL, SELF::url); 
+        // curl_setopt($ch,CURLOPT_POSTFIELDS, json_encode($payload)); 
+        // curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 0); 
+        // curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, 0); 
+        // curl_setopt($ch, CURLOPT_CONNECTTIMEOUT ,15); 
+        // curl_setopt($ch, CURLOPT_TIMEOUT, 400); //timeout in seconds 
+        // curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1); 
+        // //execute post 
+        // $result = curl_exec($ch);
 
-        //close connection 
-        curl_close($ch); 
+        // //close connection 
+        // curl_close($ch); 
 
 
+        // try {
+        //     $result2 = json_decode($result);
+        //     if ($result2->success) {
+        //         $this->conn->exec("UPDATE payment_transactions 
+        //             SET payment_status = 'success' 
+        //             WHERE reference_no = '{$reference_no}'");
+
+        //         if($reference_no) {
+        //             $this->conn->exec("UPDATE users  
+        //                 SET `expiry_date` = DATE_ADD(CURDATE(), INTERVAL (SELECT subscription_days FROM settings LIMIT 1) DAY)
+        //                 WHERE id = (SELECT user_id FROM payment_transactions WHERE reference_no = '{$reference_no}')");
+        //         }
+                    
+        //     } else {
+        //         $this->conn->exec("UPDATE payment_transactions 
+        //             SET payment_status = 'failed', return_message = '{$result2->errormsg}' 
+        //             WHERE reference_no = '{$reference_no}'");
+        //     }
+        //     return $result2;
+        // } catch (Exception $error) {
+        //     $this->conn->exec("UPDATE payment_transactions 
+        //         SET payment_status = 'failed' 
+        //         WHERE reference_no = '{$reference_no}'");
+        //     return [
+        //         'success' => false, 
+        //         'msg' => $error->getMessage()
+        //     ];
+        // }
+        // return $result;
+    }
+
+    public function updateTransactionStatus ($response, $isFromApp = false) {
+        $transctionMsg = "";
         try {
-            $result2 = json_decode($result);
-            if ($result2->success) {
+            if ( (isset($response->status) && $response->status == 'success')  
+                || (isset($response->data->status) && $response->data->status == 'successful') ) {
+                    $this->conn->exec("UPDATE payment_transactions 
+                        SET debit_amount = '{$response->data->amount}', payment_status = 'success'
+                        WHERE reference_no = '{$response->data->customer->email}'");
+                $transctionMsg = "Success transaction update received";
+            } else { // failed
                 $this->conn->exec("UPDATE payment_transactions 
-                    SET payment_status = 'success' 
-                    WHERE reference_no = '{$reference_no}'");
-            } else {
-                $this->conn->exec("UPDATE payment_transactions 
-                    SET payment_status = 'failed', return_message = '{$result2->errormsg}' 
-                    WHERE reference_no = '{$reference_no}'");
+                    SET debit_amount = '{$response->data->amount}', payment_status = 'failed' 
+                    WHERE reference_no = '{$response->data->customer->email}'");
+                $transctionMsg = "This is a failed tranasction";
             }
-            return $result2;
-        } catch (Exception $error) {
-            $this->conn->exec("UPDATE payment_transactions 
-                SET payment_status = 'failed' 
-                WHERE reference_no = '{$reference_no}'");
-            return [
-                'success' => false, 
-                'msg' => $error->getMessage()
-            ];
+        } catch(Exception $e) {
+            return ['success' => false, 'msg' => "Error updating" . $e->getMessage()];
         }
-        return $result;
+        return ['success' => true, 'msg' => "Update successful"];
     }
 
 
@@ -156,6 +235,15 @@ class User {
         extract($data);
         
         $this->conn->exec("UPDATE settings SET charge = '{$charge}'");
+
+        return ['success' => true];
+    }
+
+    function saveSubscriptionDays ($data)
+    {
+        extract($data);
+        
+        $this->conn->exec("UPDATE settings SET subscription_days = '{$subscription_days}'");
 
         return ['success' => true];
     }
@@ -223,6 +311,10 @@ class User {
                     VALUES ('{$first_name}','{$last_name}','{$phone}','{$email}','{$password}','{$picture}','{$level}','{$token}')");
                 $stmt->execute();
                 $user_id = $this->conn->lastInsertId();
+
+                $this->conn->exec("UPDATE users  
+                        SET `expiry_date` = DATE_ADD(CURDATE(), INTERVAL (SELECT subscription_days FROM settings LIMIT 1) DAY)
+                        WHERE id = '{$user_id}'");
             } else {
 
                 $set = "";
@@ -256,6 +348,51 @@ class User {
             return array('success' => false, 
                 'msg' => $e->getMessage());
         }
+    }
+
+    function updateUserPassword ($user_id, $new_password)
+    {
+        $this->conn->exec("UPDATE users SET `password` = '{$new_password}' WHERE id = '{$user_id}'");
+        return['success' => true];
+    }
+
+    function resetAccount ($email) 
+    {
+        $user_details = $this->conn->query("SELECT * 
+            FROM users 
+            WHERE email LIKE '{$email}' LIMIT 1 ")->fetchAll(PDO::FETCH_ASSOC);
+
+
+        $password = '';
+        foreach ($user_details as $key => $user) {
+            $password = $user['password'];
+        }
+
+        if ($password) {
+            $msg = 'Your school kit account password is: ' . $password;
+            @mail($email,"Reset Code",$msg);
+            return[
+                'success' => true,
+                'msg' => 'We have sent your passowrd to ' . $email
+            ];
+        } else {
+            return[
+                'success' => false,
+                'msg' => 'Email not found in the user accounts'
+            ];
+        }
+
+        // // $reset_code = mt_rand(1000, 9999);
+        // $msg = "Your password is: {$reset_code}";
+        // @mail($user_details->email,"Reset Code",$msg);
+
+        // $msg2 = "We have sent a code to {$user_details->email}";
+
+        // return[
+        //     'success' => true,
+        //     'msg' => $msg2,
+        //     'code' => $reset_code
+        // ];
     }
     
 
@@ -354,8 +491,12 @@ class User {
     {
         extract($data);
         $where = "";
-        if (isset($subject_id) && $subject_id) {
-            $where = " AND subject_id = '{$subject_id}' "; 
+        if (isset($subject_ids) && $subject_ids) {
+            $where = " AND subject_id IN ({$subject_ids}) "; 
+        }
+
+        if (isset($user_id) && $user_id) {
+            $where .= " AND (SELECT COUNT(*) FROM user_groups WHERE user_groups.group_id = groups.id AND user_groups.user_id = '{$user_id}' ) = 0 "; 
         }
 
         $stmt = $this->conn->query("SELECT groups.*,  
@@ -366,6 +507,17 @@ class User {
             (SELECT `first_name` FROM users WHERE users.id = groups.created_by  ) AS first_name
         FROM groups 
         WHERE 1=1 {$where}");
+
+    //     echo "SELECT groups.*,  
+    //     (SELECT `name` FROM subjects WHERE subjects.id = groups.subject_id  ) AS sublect_name,
+    //     (SELECT `name` FROM levels WHERE levels.id = groups.level_id  ) AS level_name,
+    //     (SELECT COUNT(*) FROM group_events WHERE group_events.group_id = groups.id ) AS events_count,
+    //     (SELECT COUNT(*) FROM user_groups WHERE user_groups.group_id = groups.id ) AS members_count,
+    //     (SELECT `first_name` FROM users WHERE users.id = groups.created_by  ) AS first_name
+    // FROM groups 
+    // WHERE 1=1 {$where}"; die;        
+
+
         return $stmt->fetchAll(PDO::FETCH_ASSOC);
     }
 
@@ -473,10 +625,45 @@ class User {
         foreach ($groups as $group_id) {
             $group_id = trim($group_id);
             $this->conn->exec("DELETE FROM user_groups WHERE group_id = '{$group_id}' AND user_id = '{$user_id}'");
-            $this->conn->exec("INSERT INTO `user_groups`(`user_id`, `group_id`, `role`) 
-                VALUES ('{$user_id}','{$group_id}', 'member')");
+
+            $this->conn->exec("INSERT INTO `user_groups`(`user_id`, `group_id`, `role`, is_not_confirmed) 
+                VALUES ('{$user_id}','{$group_id}', 'member', (SELECT IF(group_status = 'open', 0, 1) FROM groups WHERE groups.id = '{$group_id}' ))");
         }
         return array('success' => true, 'msg' => "Update successfull");
+    }
+
+
+    public function getAllGroupMembers ()
+    {
+        $memberGroups = [];
+                
+        try {
+            $results = $this->conn->query("SELECT user_groups.id, user_groups.role, user_groups.is_not_confirmed, 
+                    groups.name AS group_name, users.first_name, subjects.name AS subject_name,
+                    levels.name AS level_name
+                FROM user_groups 
+                LEFT JOIN groups ON groups.id =  user_groups.group_id
+                LEFT JOIN users ON users.id =  user_groups.user_id
+                LEFT JOIN levels ON levels.id =  users.level
+                LEFT JOIN subjects ON subjects.id =  groups.subject_id
+                WHERE 1")->fetchAll(PDO::FETCH_ASSOC);
+                
+                
+            foreach ($results as $key => $groupMemeber) {
+                if (intVal($groupMemeber['is_not_confirmed']) == 0) {
+                    $groupMemeber['confirmation_status'] = "Confirmed";
+                } elseif (intVal($groupMemeber['is_not_confirmed']) == 1) {
+                    $groupMemeber['confirmation_status'] = "Not Confirmed";
+                } else {
+                    $groupMemeber['confirmation_status'] = "Mute";
+                }
+                $memberGroups[] = $groupMemeber;
+            }
+        } catch (PDOException $e) {
+            return array('success' => false, 'msg' => $e->getMessage());
+        }
+
+        return $memberGroups;
     }
 
     public function getUserGroups ($user_id = 0)
@@ -505,7 +692,8 @@ class User {
                     FROM group_events 
                     WHERE group_events.group_id = groups.id 
                     AND group_events.`start_date_time` <= NOW()
-                    AND group_events.`end_date_time` >= NOW() ) AS pending_events 
+                    AND group_events.`end_date_time` >= NOW() ) AS pending_events,
+                (SELECT is_not_confirmed FROM user_groups WHERE user_groups.user_id = '{$user_id}' AND user_groups.group_id = groups.id) AS is_not_confirmed
                 {$user_parameters}
                 FROM groups 
                 WHERE 1=1 {$where} ORDER BY groups.name ");
@@ -514,6 +702,34 @@ class User {
             return array('success' => false, 'msg' => $e->getMessage());
         }
         
+    }
+
+    public function updateUserRequest ($user_id, $group_id, $status)
+    {
+
+        if ($status) {
+            $this->conn->query("UPDATE user_groups SET is_not_confirmed = '0' 
+                WHERE user_id = '{$user_id}' AND group_id = '{$group_id}' ");
+        } else {
+            $this->conn->query("DELETE FROM user_groups WHERE user_id = '{$user_id}' AND group_id = '{$group_id}' ");
+        }
+
+        return [
+            'success' => true
+        ];
+
+    }
+
+    public function updateUserStatus ($groupUserID, $userStatus)
+    {
+
+        $this->conn->exec("UPDATE user_groups SET is_not_confirmed = '{$userStatus}' 
+                WHERE id = '{$groupUserID}'");
+
+        return [
+            'success' => true
+        ];
+
     }
 
     public function getGroupEvents ($group_id = 0, $upcomming_events = 0, $ongoing_events = 0, $expired_events = 0)
@@ -631,7 +847,13 @@ class User {
                 LEFT JOIN groups ON groups.id = group_questions.group_id
                 LEFT JOIN users ON users.id = group_questions.created_by
                 WHERE 1=1 {$where} ");
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $questions = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($questions as $key => $question) {
+                $questions[$key]['userDetails'] = $this->conn->query("SELECT * 
+                    FROM users 
+                    WHERE users.id = '{$question['created_by']}' ")->fetchObject();
+            }
+            return $questions;
         } catch (PDOException $e) {
             return array('success' => false, 'msg' => $e->getMessage());
         }
@@ -656,11 +878,25 @@ class User {
                 FROM group_question_answers 
                 LEFT JOIN users ON users.id = group_question_answers.created_by
                 WHERE 1=1 {$where} ");
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+            $answers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+            foreach ($answers as $key => $answer) {
+                $answers[$key]['userDetails'] = $this->conn->query("SELECT * 
+                    FROM users 
+                    WHERE users.id = '{$answer['created_by']}' ")->fetchObject();
+            }
+            return $answers; 
         } catch (PDOException $e) {
             return array('success' => false, 'msg' => $e->getMessage());
         }
         
+    }
+
+    public function deleteGroupQuestion ($question_id)
+    {
+        $this->conn->exec("DELETE FROM `group_questions` 
+            WHERE id = '{$question_id}'");
+
+        return ['success' => true];
     }
 
 
@@ -669,16 +905,39 @@ class User {
     {
         extract($data);
         try {
-            $stmt = $this->conn->prepare("INSERT INTO `group_questions`( `question`, `group_id`, `created_by`) 
-                VALUES ('{$question}','{$group_id}','{$created_by}')");
+            
+            if ($question_id) {
+                $stmt = $this->conn->exec("UPDATE `group_questions` 
+                    SET `question`= '{$question}' 
+                    WHERE id = '{$question_id}'");
+            } else {
+                $stmt = $this->conn->prepare("INSERT INTO `group_questions`( `question`, `group_id`, `created_by`) 
+                    VALUES ('{$question}','{$group_id}','{$created_by}')");
+                $stmt->execute();
+                $question_id = $this->conn->lastInsertId();
+            }
 
-            $stmt->execute();
 
-            $group_id = $this->conn->lastInsertId();
+            // try to attach a file if any
+            $file = '';
+            if (isset($_FILES['file']) && isset($_FILES['file']['name']) && $_FILES['file']['name']) {
+                $savedFileInfo = $this->saveDiscussionFile($file_name = "file");
+                if ($savedFileInfo['success']) {
+                    $file = $savedFileInfo['new_file_name'];
+                    //file_name
+                    $this->conn->exec("UPDATE `group_questions` 
+                        SET `file_name`= '{$savedFileInfo['new_file_name']}'
+                        WHERE id = '{$question_id}'");
+                }
+            }
+            
+
             die(json_encode(array(
                 'success' => true,
+                'question_id' => $question_id,
                 'question' => $question,
                 'group_id' => $group_id,
+                'file' => $file,
                 'create_date' => date('Y-m-d'),
                 'user_id' => $created_by,
             )));
@@ -688,23 +947,53 @@ class User {
         
     }
 
+
+    public function deleteAnswerOnQuestion ($answer_id)
+    {
+        $this->conn->exec("DELETE FROM group_question_answers WHERE id = '{$answer_id}' ");
+        return ['success' => true];
+    }
+
+    public function updateLastSeen ($user_id)
+    {
+        $this->conn->exec("UPDATE users SET last_seen = NOW() WHERE id = '{$user_id}' ");
+        return ['success' => true];
+    }
+
     
     
     public function createAnswerOnQuestion ($data)
     {
         extract($data);
         try {
-            $stmt = $this->conn->prepare("INSERT INTO `group_question_answers`(`answer`, `question_id`, `created_by`) 
-            VALUES ('{$answer}','{$question_id}','{$created_by}')");
+            if (!$answer_id) {
+                $stmt = $this->conn->prepare("INSERT INTO `group_question_answers`(`answer`, `question_id`, `created_by`) 
+                    VALUES ('{$answer}','{$question_id}','{$created_by}')");
+                $stmt->execute();
+                $answer_id = $this->conn->lastInsertId();
+            } else {
+                $this->conn->exec("UPDATE group_question_answers SET answer='{$answer}' WHERE id = '{$answer_id}' ");
+            }
 
-            $stmt->execute();
+            // try to attach a file if any
+            $file = '';
+            if (isset($_FILES['file']) && isset($_FILES['file']['name']) && $_FILES['file']['name']) {
+                $savedFileInfo = $this->saveDiscussionFile($file_name = "file");
+                if ($savedFileInfo['success']) {
+                    $file = $savedFileInfo['new_file_name'];
+                    //file_name
+                    $this->conn->exec("UPDATE `group_question_answers` 
+                        SET `file_name`= '{$savedFileInfo['new_file_name']}'
+                        WHERE id = '{$answer_id}'");
+                }
+            }
 
-            $group_id = $this->conn->lastInsertId();
             die(json_encode(array(
                 'success' => true,
-                'id' => $group_id,
+                'id' => $answer_id,
                 'answer' => $answer,
                 'question_id' => $question_id,
+                'file' => $file,
                 'created_by' => $created_by,
                 'create_date' => date('Y-m-d')
             )));
@@ -766,6 +1055,27 @@ class User {
         } catch (PDOException $e) {
             return array('success' => false, 'msg' => $e->getMessage());
         }
+    }
+
+    public function saveDiscussionFile ($file_name = "file")
+    {
+        $upload_folder = "includes/other-files/";
+        $random_file_name = mt_rand(0, 999999999);
+        $new_file_name = '';
+        $success = false;
+        if (isset($_FILES[$file_name]) && isset($_FILES[$file_name]['name']) && $_FILES[$file_name]['name']) {
+            $upload_status = uploadFile($upload_folder, $file_name, $random_file_name);
+            if ($upload_status['success']) {
+                $success = true;
+                $new_file_name = $upload_status['target_file'];
+            }
+        } else;
+
+        return [
+            'success' => $success,
+            'new_file_name' => $new_file_name,
+            'create_date' => date('Y-m-d')
+        ];
     }
 
 
@@ -1106,6 +1416,21 @@ class User {
         }
     }
 
+    // public function getUserNotifications ($user_id)
+    // {
+    //     $userNotifications = [];
+
+    //     // FETCH EVENTS NOTIFICATIONS
+    //     $stmt = $this->conn->query("SELECT * 
+    //         FROM events 
+    //         LEFT JOIN user_groups ON events.id =  
+    //         WHERE 1=1
+    //          ");
+
+
+    //     return $notifications;
+    // }
+
 
 
     public function getGroupUsers ($group_id = 0)
@@ -1116,11 +1441,21 @@ class User {
         }
 
         try {
-            $stmt = $this->conn->query("SELECT user_groups.*, users.first_name, users.last_name
+            $stmt = $this->conn->query("SELECT user_groups.*, users.first_name, users.last_name, 
+                TIME_TO_SEC(TIMEDIFF(NOW(), users.last_seen)) AS last_seen
                 FROM user_groups 
-                JOIN users ON users.id = user_groups.user_id
+                INNER JOIN users ON users.id = user_groups.user_id
                 WHERE 1=1 {$where} ");
-            return $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            $users = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+            foreach ($users as $key => $user) {
+                $users[$key]['userDetails'] = $this->conn->query("SELECT * 
+                    FROM users 
+                    WHERE users.id = '{$user['user_id']}' ")->fetchObject();
+            }
+
+            return $users;
         } catch (PDOException $e) {
             return array('success' => false, 'msg' => $e->getMessage());
         }
